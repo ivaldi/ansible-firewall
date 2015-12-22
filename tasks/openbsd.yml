@@ -1,0 +1,7 @@
+---
+- name: install pf rules
+  template:
+    src: pf.j2
+    dest: /etc/pf.conf
+    validate: pfctl -nf %s
+  notify: reload pf

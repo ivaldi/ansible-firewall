@@ -1,0 +1,35 @@
+# {{ ansible_managed }}
+
+# accept everything on loopback
+set skip on lo
+
+# default deny
+block in
+pass out
+
+{% for rule in firewall_rules %}
+
+  {%- if rule.port is defined -%}
+    {%- set port = ['to port', rule.port ] -%}
+  {%- else -%}
+    {%- set port = [ '' ] -%}
+  {%- endif -%}
+  {%- if rule.allow|default(true) -%}
+    {%- set allow = 'pass' -%}
+  {%- else -%}
+    {%- set allow = 'block' -%}
+  {%- endif -%}
+
+  {% if rule.source is defined %}
+
+    {% for ip in rule.source %}
+      {{ allow }} in proto {{ rule.proto|default('tcp') }} from {{ ip }} {{ port|join(' ') }}
+    {% endfor %}
+
+  {% else %}
+
+    {{ allow }} in proto {{ rule.proto|default('tcp') }} {{ port|join(' ') }}
+
+  {% endif %}
+
+{% endfor %}

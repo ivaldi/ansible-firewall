@@ -1,0 +1,41 @@
+# {{ ansible_managed }}
+*filter
+
+# default deny
+:INPUT DROP
+:FORWARD DROP
+:OUTPUT ACCEPT
+
+# accept everything on loopback
+-A INPUT -i lo -j ACCEPT
+
+{% for rule in firewall_rules %}
+
+  {%- if rule.port is defined -%}
+    {%- set port = [ '--dport', rule.port ] -%}
+  {%- else -%}
+    {%- set port = [] -%}
+  {%- endif -%}
+  {%- if rule.allow|default(true) -%}
+    {%- set allow = 'ACCEPT' -%}
+  {%- else -%}
+    {%- set allow = 'DROP' -%}
+  {%- endif -%}
+
+{% if rule.source is defined %}
+
+{% for ip in rule.source %}
+-A INPUT -p {{ rule.proto|default('tcp') }} {{ port|join(' ') }} -s {{ ip }} -j {{ allow }}
+{% endfor %}
+
+{% else %}
+
+-A INPUT -p {{ rule.proto|default('tcp') }} {{ port|join(' ') }} -j {{ allow }}
+
+{% endif %}
+
+{% endfor %}
+
+# allow already establed connections which were allowed by other rules
+-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+COMMIT

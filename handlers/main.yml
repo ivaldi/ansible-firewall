@@ -1,0 +1,5 @@
+---
+- name: reload iptables
+  command: /etc/network/if-pre-up.d/load_iptables
+- name: reload pf
+  command: pfctl -f /etc/pf.conf

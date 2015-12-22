@@ -1,0 +1,12 @@
+---
+- name: install iptables rules
+  template:
+    src: iptables.j2
+    dest: /etc/iptables.rules
+    validate: iptables-restore --test %s
+  notify: reload iptables
+- name: install pre-up script
+  copy:
+    src: load_iptables
+    dest: /etc/network/if-pre-up.d/load_iptables
+    mode: 0755
