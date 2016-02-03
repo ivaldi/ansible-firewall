@@ -38,4 +38,7 @@
 
 # allow already establed connections which were allowed by other rules
 -A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+
+{{ firewall_append }}
+
 COMMIT
