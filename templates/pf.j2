@@ -34,4 +34,4 @@ pass out
 
 {% endfor %}
 
-{{ firewall_append }}
+{{ firewall_append|default('') }}
