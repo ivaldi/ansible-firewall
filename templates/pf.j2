@@ -23,12 +23,12 @@ pass out
   {% if rule.source is defined %}
 
     {% for ip in rule.source %}
-      {{ allow }} in proto {{ rule.proto|default('tcp') }} from {{ ip }} {{ port|join(' ') }}
+      {{ allow }} in on {{ rule.interface|default('any') }} proto {{ rule.proto|default('tcp') }} from {{ ip }} {{ port|join(' ') }}
     {% endfor %}
 
   {% else %}
 
-    {{ allow }} in proto {{ rule.proto|default('tcp') }} {{ port|join(' ') }}
+    {{ allow }} in on {{ rule.interface|default('any') }} proto {{ rule.proto|default('tcp') }} {{ port|join(' ') }}
 
   {% endif %}
 
