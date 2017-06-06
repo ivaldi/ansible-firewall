@@ -7,8 +7,7 @@ set skip on lo
 block in
 pass out
 
-table <fail2ban>
-block drop in quick on egress from <fail2ban>
+anchor "relayd/*"
 
 {% for rule in firewall_rules %}
 
