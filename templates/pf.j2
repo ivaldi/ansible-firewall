@@ -9,6 +9,10 @@ pass out
 
 anchor "relayd/*"
 
+# blacklist of badguys. add them using: pfctl -t badhosts -T add <SOMEIP>
+table <badhosts> persist
+block quick on any from <badhosts> to any
+
 {% for rule in firewall_rules %}
 
   {%- if rule.port is defined -%}
