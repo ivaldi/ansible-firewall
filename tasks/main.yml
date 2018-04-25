@@ -3,3 +3,5 @@
   when: ansible_distribution == 'OpenBSD'
 - include: linux.yml
   when: ansible_distribution == 'Debian' or ansible_distribution == 'Ubuntu'
+- include: redhat.yml
+  when: ansible_os_family == 'RedHat'
