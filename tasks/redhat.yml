@@ -1,11 +1,10 @@
 ---
 - name: Install Ansible dependencies
   dnf:
-    name: '{{ item }}'
+    name:
+      - firewalld
+      - python-firewall
     state: present
-  with_items:
-    - firewalld
-    - python-firewall
 - name: Enable firewalld
   service:
     name: firewalld
