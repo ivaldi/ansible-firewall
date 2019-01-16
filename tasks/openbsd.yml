@@ -42,5 +42,5 @@
   cron:
     name: update badhost database
     special_time: daily
-    job: pf-badhost
+    job: pf-badhost > /dev/null
     user: _pfbadhost
