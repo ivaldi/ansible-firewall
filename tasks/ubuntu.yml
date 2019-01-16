@@ -15,6 +15,7 @@
   with_subelements:
     - '{{ firewall_rules }}'
     - source
+    - skip_missing: true
   when: item.source is not defined
 - name: enable ufw
   ufw:
