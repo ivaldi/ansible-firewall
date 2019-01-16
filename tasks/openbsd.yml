@@ -1,7 +1,46 @@
 ---
+- name: add _pfbadhost group
+  group:
+    name: _pfbadhost
+- name: add _pfbadhost user
+  user:
+    name: _pfbadhost
+    group: _pfbadhost
+    password: '*'
+    create_home: no
+    login_class: daemon
+- name: add special doas commands to _pfbadhost for copying updated badhosts file
+  lineinfile:
+    line: permit nopass _pfbadhost cmd cp args /tmp/pf-badhost.txt /etc/
+    dest: /etc/doas.conf
+    validate: doas -C %s
+- name: add special doas commands for to _pfbadhost for updating badhost database
+  lineinfile:
+    line: permit nopass _pfbadhost cmd pfctl args -t badhosts -T replace -f /etc/pf-badhost.txt
+    dest: /etc/doas.conf
+    validate: doas -C %s
+- name: create badhost script
+  copy:
+    src: pf-badhost
+    dest: /usr/local/bin/pf-badhost
+    mode: '555'
+    owner: root
+    group: bin
+- name: setup required files for pf-badhost
+  shell: pf-badhost
+  become: true
+  become_user: _pfbadhost
+  args:
+    creates: /etc/pf-badhosts.txt
 - name: install pf rules
   template:
     src: pf.j2
     dest: /etc/pf.conf
     validate: pfctl -nf %s
   notify: reload pf
+- name: setup cronjob for badhost renewal
+  cron:
+    name: update badhost database
+    special_time: daily
+    job: pf-badhost
+    user: _pfbadhost
