@@ -6,7 +6,7 @@
   user:
     name: _pfbadhost
     group: _pfbadhost
-    password: '*'
+    password: '*************'
     create_home: no
     login_class: daemon
 - name: add special doas commands to _pfbadhost for copying updated badhosts file
@@ -23,7 +23,7 @@
   copy:
     src: pf-badhost
     dest: /usr/local/bin/pf-badhost
-    mode: '555'
+    mode: 755
     owner: root
     group: bin
 - name: setup required files for pf-badhost
