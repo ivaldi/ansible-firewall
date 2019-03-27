@@ -41,7 +41,7 @@ egrep -o '([[:digit:]]{1,3}\.){3}[[:digit:]]{1,3}' shodan.txt >> pf-badhost.txt
 
 mv /tmp/pfbadhost/pf-badhost.txt /tmp/
 doas cp /tmp/pf-badhost.txt /etc/
-doas pfctl -t badhosts -T replace -f /etc/pf-badhost.txt
+doas pfctl -t badhosts -T replace -f /etc/pf-badhost.txt 2> /dev/null
 
 # Clean up after ourselves
 
