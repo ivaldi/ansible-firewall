@@ -3,14 +3,14 @@
   ufw:
     rule: allow
     proto: '{{ item.proto|default(''tcp'') }}'
-    to_port: '{{ item.port|default(null) }}'
+    to_port: '{{ item.port|default(None) }}'
   with_items: '{{ firewall_rules }}'
   when: item.source is not defined
 - name: install ufw rules with sources
   ufw:
     rule: allow
     proto: '{{ item.0.proto|default(''tcp'') }}'
-    to_port: '{{ item.0.port|default(null) }}'
+    to_port: '{{ item.0.port|default(None) }}'
     from_ip: '{{ item.1 }}'
   with_subelements:
     - '{{ firewall_rules }}'
