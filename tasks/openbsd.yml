@@ -44,3 +44,4 @@
     special_time: daily
     job: pf-badhost > /dev/null
     user: _pfbadhost
+    disabled: true
