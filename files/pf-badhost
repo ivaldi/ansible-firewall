@@ -1,5 +1,6 @@
 #!/bin/sh
-# Copyright 2018 Jordan Geoghegan
+
+# Copyright 2020 Jordan Geoghegan <jordan@geoghegan.ca>
 
 # Permission to use, copy, modify, and/or distribute this software for any 
 # purpose with or without fee is hereby granted, provided that the above 
@@ -13,37 +14,294 @@
 # OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR 
 # PERFORMANCE OF THIS SOFTWARE.
 
+# Version 0.3 "Gods and Generals" -- Released March 10th 2020
 
-# Download some of the most popular IP Blocklists, you can add any lists here 
-# you like as long as they have similar formatting to the other lists. 
+# In loving memory of Ron Sather
 
-# Make temp folder to hold all files
+# This script downloads some of the most popular IP Blocklists, but you can add 
+# any lists you like. Simply add a line in the format below: 
+# Example: ftp -o $"tmpdir"/"$(random_string)" https://www.example.com/example.txt
+# IPv4 or IPv6 lists containing individual addresses or CIDR blocks are supported.
+# The address parser also supports mixed lists. 
 
-mkdir /tmp/pfbadhost
+# To enable blocking by country, authlog analysis or enable IPv6 and optional blocklists, see below.
 
-# Download popular IP blocklists and parse
+# IPv6 Notes:
+# pf-badhost requires IPv6 lists to be preformatted to be RFC-5952 compliant.
+# Several preprocessors have been written for the default list providers included in this script.
+# If adding your own IPv6 lists, the addresses must be RFC 5952 compliant and \
+# have one address per line with no leading or trailing whitespace. 
 
-cd /tmp/pfbadhost 
-ftp https://www.binarydefense.com/banlist.txt
-ftp https://rules.emergingthreats.net/blockrules/compromised-ips.txt
-ftp https://rules.emergingthreats.net/fwrules/emerging-Block-IPs.txt
-ftp https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level3.netset
-ftp https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level2.netset
-ftp https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level1.netset
-perl -lne 'print if ! /^\s*(#.*)?$/' *.txt *.netset | sort -uV > pf-badhost.txt
+# -------------------------------------------------------------------
+
+### Functions
+
+# Validates IPv4 addresses (can pull addresses from arbitrarily formatted text, thanks to "grep -o"
+parse_v4 () {
+	# If your platform supports Rust, you should replace the use of the 
+	# system grep with ripgrep for a large performance increase
+	# replace "grep -E" with "rg" to use ripgrep
+	grep -E -o "(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(/[1-9][0-9]?[0-9]?)?" | \
+	awk -F '[/.]' '$1 > 0 && $1<256 && $2<256 && $3<256 && $4<256 && !/\.\./ && $5<32'
+}
+
+# Validates IPv6 addresses (Addresses must be RFC-5952 Compliant and have one address per line)
+# Many IPv6 address lists require a preprocessor to format the lists/addresses correctly for validation (see below) 
+parse_v6 () {
+	perl -wlne '/^(((?=.*(::))(?!.*\3.+\3))\3?|([\dA-F]{1,4}(\3|:\b|$)|\2))(?4){5}((?4){2}|(((2[0-4]|1\d|[1-9])?\d|25[0-5])\.?\b){4})(\/([0-9]|[1-9][0-9]|1[0-1][0-9]|12[0-8]))?\z/ai and print $&;'
+}
+
+# Generate random string (used for making unique/unpredictable file names)
+random_string () {
+	head -n 100 < /dev/urandom | sha512 -b | tr -cd '[:alnum:]'
+}
+
+clean_up () {
+	rm -rf "$tmpdir" "$outdir" "$authlog"
+}
+
+# Safely abort if config checks fail
+abort () {
+	printf "\n/etc/pf-badhost.txt Contains Bad Data! Reverting changes and bailing out...\n\n" ; cp /dev/null /etc/pf-badhost.txt ; clean_up ; exit 1
+}
+
+# Check for network connectivity to GitHub, bail out if fail
+network_check_abort () {
+	printf "\nNo Network Connectivity! Quitting without making changes...\n\n" ; clean_up ; exit 1
+}
+
+list_update_abort () {
+	printf "\nFailed to update /etc/pf-badhost.txt! Please ensure the file has correct permissions and that the partition has free space!\n\n" ; clean_up ; exit 1
+}
+
+# IPv4 CIDR/Address Aggregator [pure Perl version of ISC "aggregate" utility]
+subnet_merge=$(cat <<'EOF'
+#!/usr/bin/perl -lp0a
+$_=join$\,sort map{1x(s/\d*./unpack B8,chr$&/ge>4?$&:32)&$_}@F;1while s/^(.*)
+\1.*/$1/m||s/^(.*)0
+\1.$/$1/m;s!^.*!(join'.',map{ord}split'',pack B32,$&).'/'.length$&!gme
+EOF
+)
+
+# Pure Perl version of ISC "aggregate" utitity [code stored in above variable "subnet_merge"]
+# WARNING: ~10x slower than C based utilty [see below]
+sub_aggr_perl () {
+	nice perl -e "$subnet_merge" | sed 's/\/32//g'
+}
+
+# Call ISC "aggregate" utility to aggregate IP address list. 
+# Run "pkg_add aggregate" on OpenBSD to install
+# Very mature, stable code written in C
+sub_aggr_c () {
+	awk '!/\/[0-3]?[0-9]$/ {$0=$0"\/32"}1' | nice aggregate | sed 's/\/32$//g'
+}
+
+
+# Authlog analysis function
+hail_mary_mitigate () {
+	# Analyzes authlog and attempts to find bruteforcers
+	# Requires adding extra "doas" permission (explained in section below) 
+        doas zcat -f /var/log/authlog /var/log/authlog.0.gz | authlog_proc | parse_v4 | whitelist | awk '{ a[$0]++ }END{ for(i in a) print a[i],i }' | awk '$1>50 {print $2}' | sort -Vu
+	# Uncomment to enable IPv6 authlog scanning:
+	#doas zcat -f /var/log/authlog /var/log/authlog.0.gz | authlog_proc | parse_v6 | whitelist | awk '{ a[$0]++ }END{ for(i in a) print a[i],i }' | awk '$1>50 {print $2}' | sort -Vu
+}
+
+# Hail Mary Mitigation preproccessor
+authlog_proc () {
+	awk '$7 !~ "disconnect" && $6 !~ "Disconnected|Accepted"' | awk '{print $9} {print $10} {print $11} {print $12} {print $13} {print $14}' 
+}
+
+whitelist () {
+	# Add addresses to whitelist from SSH Auth log analysis
+	# Supports IPv4 and IPv6 addresses
+        grep -E -v '198.18.1.5|198.18.2.4'
+}
+
+# -------------------------------------------------------------------
+
+### IPv6 Pre-Processors
+
+# IPv6 Address compactor (Used to convert hex value/long form IPv6 addresses to compact form)
+ipv6_compact=$(cat <<'EOF'
+sub compact {
+    # Taken and modified from IPv6::Address on CPAN
+    # This Perl snippet is bound by the Artistic Licence
+    my $str = shift;
+    return '::' if($str eq '0:0:0:0:0:0:0:0');
+    for(my $i=7;$i>1;$i--) {
+            my $zerostr = join(':',split('','0'x$i));
+            ###print "DEBUG: $str $zerostr \n";
+            if($str =~ /:$zerostr$/) {
+                    $str =~ s/:$zerostr$/::/;
+                    return $str;
+            }
+            elsif ($str =~ /:$zerostr:/) {
+                    $str =~ s/:$zerostr:/::/;
+                    return $str;
+            }
+            elsif ($str =~ /^$zerostr:/) {
+                    $str =~ s/^$zerostr:/::/;
+                    return $str;
+            }
+    }
+    return $str;
+}
+
+while( my $line = <>)  {
+    print compact($line);
+}
+EOF
+)
+
+# ipdeny.com IPv6 Preprocessor 
+ipdenyv6_proc () {
+	# Make ipdeny.com address lists RFC 5952 Compliant
+	sed 's/0000/0/g' | perl -e "$ipv6_compact" | sed 's/::0\//::\//g'
+}
+
+# SpamHause IPv6 Preprocessor 
+spamhausev6_proc () {
+	# Function created for consistency
+	awk '{print $1}'
+}
+
+# -------------------------------------------------------------------
+
+### Macros / Variables
+tmpdir=$(mktemp -d)
+outdir=$(mktemp -d)
+v4list=$(random_string)
+v6list=$(random_string)
+finout=$(random_string)
+authlog=$(mktemp)
+
+# -------------------------------------------------------------------
+
+### Download Block Lists
+
+# Check for network connectivity to GitHub, bail out if fail
+ftp -o /dev/null https://github.com || network_check_abort
+
+# Download popular IPv4 blocklists 
+ftp -o "$tmpdir"/"$(random_string)" https://www.binarydefense.com/banlist.txt
+ftp -o "$tmpdir"/"$(random_string)" https://rules.emergingthreats.net/blockrules/compromised-ips.txt
+ftp -o "$tmpdir"/"$(random_string)" https://rules.emergingthreats.net/fwrules/emerging-Block-IPs.txt
+ftp -o "$tmpdir"/"$(random_string)" https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level3.netset
+ftp -o "$tmpdir"/"$(random_string)" https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level2.netset
+ftp -o "$tmpdir"/"$(random_string)" https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level1.netset
+
+# Spamhause DROP lists (Don't Route Or Peer)
+ftp -o "$tmpdir"/"$(random_string)" https://www.spamhaus.org/drop/drop.txt
+ftp -o "$tmpdir"/"$(random_string)" https://www.spamhaus.org/drop/edrop.txt
 
 # Block Shodan
+ftp -o "$tmpdir"/"$(random_string)" https://isc.sans.edu/api/threatlist/shodan/?text
 
-ftp https://isc.sans.edu/api/threatlist/shodan/shodan.txt 
-egrep -o '([[:digit:]]{1,3}\.){3}[[:digit:]]{1,3}' shodan.txt >> pf-badhost.txt
+# -------------------------------------------------------------------
 
-# Move banlist into /etc and reload the pf table
+### User Configuration Area -- START
 
-mv /tmp/pfbadhost/pf-badhost.txt /tmp/
-doas cp /tmp/pf-badhost.txt /etc/
-doas pfctl -t badhosts -T replace -f /etc/pf-badhost.txt 2> /dev/null
+# Configure additional lists to your hearts content. 
+# Custom IPv4 lists should "Just Work".
+# Custom IPv6 lists may require preprocessing due to 
+# strict/difficult regex matching and validation logic
+
+###################################################################
+# !!!EXPERIMENTAL!!!
+# Haily Mary Cloud mitigation (authlog analysis)
+# Requires adding line to /etc/doas.conf:
+# permit nopass _pfbadhost cmd zcat args -f /var/log/authlog /var/log/authlog.0.gz
+#
+# hail_mary_mitigate > "$authlog" # Search /var/log/authlog for bruteforcers
+###################################################################
+
+# Optional blocklists (uncomment to enable)
+
+# Spamhause DROP lists (Don't Route Or Peer) IPv6
+# ftp -o - https://www.spamhaus.org/drop/dropv6.txt | spamhausev6_proc > "$tmpdir"/"$(random_string)"
+
+# Combined list of all blocklist.de lists (adds over 30,000 addresses)
+# ftp -o "$tmpdir"/"$(random_string)" https://lists.blocklist.de/lists/all.txt
+
+# SSH attackers list 
+# ftp -o "$tmpdir"/"$(random_string)" https://lists.blocklist.de/lists/ssh.txt
+
+###################################################################
+# Block by country (Uses ipdeny.com aggregate country block lists)
+# ipdeny.com country blocklists can be found here:
+# IPv4: https://www.ipdeny.com/ipblocks/
+# IPv6: https://www.ipdeny.com/ipv6/ipaddresses/aggregated/
+# Uncomment the lines below to enable country blacklisting
+###################################################################
+
+# China IPv4
+# ftp -o "$tmpdir"/"$(random_string)" https://www.ipdeny.com/ipblocks/data/aggregated/cn-aggregated.zone
+
+# China IPv6
+# ftp -o - https://www.ipdeny.com/ipv6/ipaddresses/aggregated/cn-aggregated.zone | ipdenyv6_proc > "$tmpdir"/"$(random_string)"
+
+# Iran IPv4
+# ftp -o "$tmpdir"/"$(random_string)" https://www.ipdeny.com/ipblocks/data/aggregated/ir-aggregated.zone
+
+# Iran IPv6
+# ftp -o - https://www.ipdeny.com/ipv6/ipaddresses/aggregated/ir-aggregated.zone | ipdenyv6_proc > "$tmpdir"/"$(random_string)"
+
+# North Korea IPv4
+# ftp -o "$tmpdir"/"$(random_string)" https://www.ipdeny.com/ipblocks/data/aggregated/kp-aggregated.zone
+
+###################################################################
+# User added lists
+# IPv4:
+# ftp -o "$tmpdir"/"$(random_string)" https://www.example.com/example.txt
+#
+# IPv6:
+# ftp -o - https://www.example.com/example.txt | preprocessor > "$tmpdir"/"$(random_string)"
+#
+# Local File: # Make sure file is readable by user "_pfbadhost"
+# cat /path/to/file.txt > "$tmpdir"/"$(random_string)"
+###################################################################
+
+# Uncomment to enable IP Subnet Aggregation (Warning: CPU Intensive!)
+# Must have "aggregate" tool installed - Do "pkg_add aggregate" on OpenBSD
+# find "$tmpdir" -type f -print0 | xargs -0 cat | parse_v4 | sub_aggr_c > "$outdir"/"$v4list"
+
+# Optional pure Perl subnet aggregator with no outside dependencies:
+# Warning: ~10x slower than using "aggregate" option above
+# find "$tmpdir" -type f -print0 | xargs -0 cat | parse_v4 | sub_aggr_perl > "$outdir"/"$v4list"
+
+# Comment out line below if using Subnet Aggregation 
+find "$tmpdir" -type f -print0 | xargs -0 cat | parse_v4 | sort -Vu > "$outdir"/"$v4list" 
+
+## IPv6 Addresses
+# Uncomment to enable IPv6 
+# find "$tmpdir" -type f -print0 | xargs -0 cat | parse_v6 | sort -Vu > "$outdir"/"$v6list"
+
+# Add date header to list
+echo "# Date Created: $(date)" > "$outdir"/"$finout"
+
+###################################################################
+# User Defined Rules (add or negate addresses from block list)
+  printf "\n# User Defined Rules:\n\n" >> "$outdir"/"$finout"
+# echo "!169.254.169.254" >> "$outdir"/"$finout"
+# echo "!2001:19f0:ffff::1" >> "$outdir"/"$finout"
+# echo "192.168.17.0/24" >> "$outdir"/"$finout"
+###################################################################
+
+### User Configuration Area -- END
+
+
+# (Do not edit this section unless you know what you're doing)
+
+### Reload PF Table
+
+# Create and move banlist into /etc and reload the pf table
+printf "\n# Rules Generated from /var/log/authlog:\n\n" >> "$outdir"/"$finout"
+cat "$authlog" >> "$outdir"/"$finout"
+printf "\n# List Generated Rules:\n\n" >> "$outdir"/"$finout"
+cat "$outdir"/"$v4list" "$outdir"/"$v6list" >> "$outdir"/"$finout" 2>/dev/null
+cp "$outdir"/"$finout" /etc/pf-badhost.txt || list_update_abort
+doas pfctl -nf /etc/pf.conf || abort
+doas pfctl -t pfbadhost -T replace -f /etc/pf-badhost.txt || abort
 
 # Clean up after ourselves
-
-rm -r /tmp/pfbadhost
-rm /tmp/pf-badhost.txt
+clean_up || echo "WARNING: Failed to delete temporary files!"

@@ -9,14 +9,29 @@
     password: '*************'
     create_home: no
     login_class: daemon
-- name: add special doas commands to _pfbadhost for copying updated badhosts file
+
+# Remove legacy doas commands
+- name: remove special doas command to _pfbadhost for copying updated badhosts file
   lineinfile:
     line: permit nopass _pfbadhost cmd cp args /tmp/pf-badhost.txt /etc/
     dest: /etc/doas.conf
     validate: doas -C %s
-- name: add special doas commands for to _pfbadhost for updating badhost database
+    state: absent
+- name: remove special doas command to _pfbadhost for applying new pfctl config
   lineinfile:
     line: permit nopass _pfbadhost cmd pfctl args -t badhosts -T replace -f /etc/pf-badhost.txt
+    dest: /etc/doas.conf
+    validate: doas -C %s
+    state: absent
+
+- name: add special doas commands for to _pfbadhost for updating pf config
+  lineinfile:
+    line: permit nopass _pfbadhost cmd pfctl args -t pfbadhost -T replace -f /etc/pf-badhost.txt
+    dest: /etc/doas.conf
+    validate: doas -C %s
+- name: add special doas commands for to _pfbadhost for updating badhost database
+  lineinfile:
+    line: permit nopass _pfbadhost cmd pfctl args -nf /etc/pf.conf
     dest: /etc/doas.conf
     validate: doas -C %s
 - name: create badhost script
@@ -26,12 +41,19 @@
     mode: 755
     owner: root
     group: bin
+- name: change pf-badhost script permissions
+  file:
+    group: _pfbadhost
+    owner: _pfbadhost
+    mode: 0600
+    path: /etc/pf-badhost.txt
+    state: touch
 - name: setup required files for pf-badhost
   shell: pf-badhost
   become: true
   become_user: _pfbadhost
   args:
-    creates: /etc/pf-badhosts.txt
+    creates: /etc/pf-badhost.txt
 - name: install pf rules
   template:
     src: pf.j2
@@ -44,4 +66,3 @@
     special_time: daily
     job: pf-badhost > /dev/null
     user: _pfbadhost
-    disabled: true
