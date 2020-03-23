@@ -194,8 +194,8 @@ ftp -o "$tmpdir"/"$(random_string)" https://raw.githubusercontent.com/firehol/bl
 ftp -o "$tmpdir"/"$(random_string)" https://www.spamhaus.org/drop/drop.txt
 ftp -o "$tmpdir"/"$(random_string)" https://www.spamhaus.org/drop/edrop.txt
 
-# Block Shodan
-ftp -o "$tmpdir"/"$(random_string)" https://isc.sans.edu/api/threatlist/shodan/?text
+# Block Shodan; Disabled due to out of memory issues
+# ftp -o "$tmpdir"/"$(random_string)" https://isc.sans.edu/api/threatlist/shodan/?text
 
 # -------------------------------------------------------------------
 
