@@ -47,7 +47,7 @@
     owner: _pfbadhost
     mode: 0600
     path: /etc/pf-badhost.txt
-    state: touch
+    state: file
 - name: setup required files for pf-badhost
   shell: pf-badhost
   become: true
